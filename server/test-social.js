@@ -1,7 +1,7 @@
 // Social server tests: friend requests, DMs, gifts (offline inbox), block, report, profile, chat rooms+seats+lock/kick+start, signaling relay, persistence, profanity filter
 const a=require('assert'),{spawn}=require('child_process'),WS=require('ws'),fs=require('fs'),os=require('os'),path=require('path');
 const PORT=8211,DATA=path.join(os.tmpdir(),'ls-social-test-'+process.pid+'.json');try{fs.unlinkSync(DATA)}catch(e){}
-let srv;function start(){return new Promise(res=>{srv=spawn('node',[path.join(__dirname,'index.js')],{env:Object.assign({},process.env,{PORT,DATA_FILE:DATA,PERSIST_MS:20,BOT_MS:100})});srv.stdout.once('data',()=>res())})}
+let srv;function start(){return new Promise(res=>{srv=spawn('node',[path.join(__dirname,'index.js')],{env:Object.assign({},process.env,{PORT,DATA_FILE:DATA,PERSIST_MS:20,BOT_MS:100,DM_NEW_CAP:2})});srv.stdout.once('data',()=>res())})}
 function stop(){return new Promise(res=>{srv.once('exit',res);srv.kill('SIGTERM')})}
 function client(pid,name,prof){return new Promise(res=>{const ws=new WS('ws://localhost:'+PORT);const q=[],waits=[];const C={ws,pid,name,q,
  send:o=>ws.send(JSON.stringify(o)),
@@ -16,7 +16,14 @@ const T=t=>m=>m.t===t;
  // profile card
  A.send({t:'profile',fid:B.fid});let p=await A.wait(T('profile'));a.strictEqual(p.p.name,'Bob');a.strictEqual(p.p.level,5);a.strictEqual(p.p.frame,'gold');a.strictEqual(p.p.online,true);
  // DM to non-friend refused
- A.send({t:'dm',to:B.fid,text:'hi'});await A.wait(m=>m.t==='error'&&/friends/.test(m.msg));
+ // 3.10.2: DM to a non-friend is allowed, shows in inbox with unread, read receipt on dmhist
+ A.send({t:'dm',to:B.fid,text:'hi stranger'});let s0=await B.wait(T('dm'));a.strictEqual(s0.m.text,'hi stranger');a.strictEqual(s0.from.fid,A.fid);let s0a=await A.wait(T('dm'));a.strictEqual(s0a.to.fid,B.fid);
+ B.send({t:'inbox'});let ib=await B.wait(T('inbox'));a.strictEqual(ib.list.length,1);a.strictEqual(ib.list[0].fid,A.fid);a.strictEqual(ib.list[0].unread,1);a.strictEqual(ib.list[0].last.text,'hi stranger');
+ B.send({t:'dmhist',fid:A.fid});let bh=await B.wait(T('dmhist'));a.strictEqual(bh.p.fid,A.fid);await A.wait(m=>m.t==='dmread'&&m.fid===B.fid);
+ B.send({t:'inbox'});ib=await B.wait(T('inbox'));a.strictEqual(ib.list[0].unread,0);
+ // friends-only setting blocks strangers
+ B.send({t:'dmset',friendsOnly:true});await B.wait(T('dmset'));await new Promise(r=>setTimeout(r,450));A.send({t:'dm',to:B.fid,text:'again'});await A.wait(m=>m.t==='error'&&/only accepts/.test(m.msg));
+ B.send({t:'dmset',friendsOnly:false});await B.wait(T('dmset'));console.log('stranger DM + inbox + read receipt + friends-only ok');
  // friend request -> accept
  A.send({t:'freq',fid:B.fid});await B.wait(T('freqIn'));let sb=await B.wait(m=>m.t==='social'&&m.reqIn.length===1);a.strictEqual(sb.reqIn[0].fid,A.fid);
  B.send({t:'faccept',fid:A.fid});sb=await B.wait(m=>m.t==='social'&&m.friends.length===1);a.strictEqual(sb.friends[0].fid,A.fid);
@@ -24,10 +31,15 @@ const T=t=>m=>m.t===t;
  console.log('friend request/accept ok');
  // DM with profanity filter + history + unread
  A.send({t:'dm',to:B.fid,text:'hello you shit player'});let d1=await B.wait(T('dm'));a.strictEqual(d1.m.text,'hello you **** player');await A.wait(T('dm'));
- B.send({t:'dmhist',fid:A.fid});let h=await B.wait(T('dmhist'));a.strictEqual(h.list.length,1);console.log('DM + filter ok');
- // gift to offline friend lands in inbox on next hello
- B.close();await new Promise(r=>setTimeout(r,200));A.send({t:'sgift',to:B.fid,kind:'diamonds',amount:500});let gs=await A.wait(T('giftSent'));a.strictEqual(gs.amount,100);// capped
- const B2=await client(B.pid,'Bob');let gi=await B2.wait(T('giftIn'));a.strictEqual(gi.kind,'diamonds');a.strictEqual(gi.amount,100);a.strictEqual(gi.from.fid,A.fid);console.log('offline gift inbox ok');
+ B.send({t:'dmhist',fid:A.fid});let h=await B.wait(T('dmhist'));a.strictEqual(h.list.length,2);console.log('DM + filter ok');
+ // daily cap on new chats with strangers (DM_NEW_CAP=2 in this test)
+ const Dd=await client('pidD-'+Date.now(),'Dave');Cc.send({t:'dm',to:A.fid,text:'yo'});await Cc.wait(T('dm'));await new Promise(r=>setTimeout(r,450));
+ Cc.send({t:'dm',to:B.fid,text:'yo'});await Cc.wait(T('dm'));await new Promise(r=>setTimeout(r,450));Cc.send({t:'dm',to:Dd.fid,text:'yo'});await Cc.wait(m=>m.t==='error'&&/Daily limit/.test(m.msg));
+ await new Promise(r=>setTimeout(r,450));Cc.send({t:'dm',to:A.fid,text:'existing chat still ok'});await Cc.wait(m=>m.t==='dm'&&m.m.text==='existing chat still ok');Dd.close();console.log('stranger daily cap ok');
+ B.q.length=0;A.q.length=0;
+ // 3.10.2: coin/diamond gifts between players are disabled
+ B.close();await new Promise(r=>setTimeout(r,200));A.send({t:'sgift',to:B.fid,kind:'diamonds',amount:500});await A.wait(m=>m.t==='error'&&/disabled/.test(m.msg));
+ const B2=await client(B.pid,'Bob');await new Promise(r=>setTimeout(r,300));a.ok(!B2.q.some(m=>m.t==='giftIn'),'no currency gift may arrive');a.ok(!A.q.some(m=>m.t==='giftSent'));console.log('currency gifts disabled ok');
  // block: removes friendship, blocks DMs and requests
  Cc.send({t:'freq',fid:A.fid});await A.wait(T('freqIn'));A.send({t:'block',fid:Cc.fid});let sa2=await A.wait(m=>m.t==='social'&&m.blocked.length===1);a.strictEqual(sa2.reqIn.length,0);
  Cc.send({t:'freq',fid:A.fid});await Cc.wait(m=>m.t==='error'&&/Cannot/.test(m.msg));A.send({t:'report',fid:Cc.fid,reason:'abuse'});await A.wait(m=>m.t==='toast'&&/Report/.test(m.msg));console.log('block/report ok');
@@ -62,6 +74,6 @@ const T=t=>m=>m.t===t;
  // persistence across restart
  A.close();B2.close();Cc.close();await new Promise(r=>setTimeout(r,200));await stop();await start();
  const A2=await client(A.pid,'Alice');A2.send({t:'social'});const s4=await A2.wait(m=>m.t==='social'&&m.friends.length===1);a.strictEqual(s4.friends[0].fid,B.fid);a.strictEqual(s4.blocked.length,1);
- A2.send({t:'dmhist',fid:B.fid});const h2=await A2.wait(T('dmhist'));a.strictEqual(h2.list.length,1);console.log('persistence ok');
+ A2.send({t:'dmhist',fid:B.fid});const h2=await A2.wait(T('dmhist'));a.strictEqual(h2.list.length,2);console.log('persistence ok');
  A2.close();await stop();try{fs.unlinkSync(DATA)}catch(e){}console.log('ALL SOCIAL TESTS PASSED');process.exit(0)
 })().catch(e=>{console.error('FAIL',e);try{srv.kill()}catch(_){}process.exit(1)});

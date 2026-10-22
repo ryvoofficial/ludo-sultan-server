@@ -1,10 +1,11 @@
-// Ludo Sultan social layer: profiles, friend requests, DMs, gifts, block/report, chat rooms with voice seats,
+// Ludo Sultan social layer: profiles, friend requests, DMs (any player, 3.10.2), inbox, block/report, chat rooms with voice seats,
 // clubs, recent players, and WebRTC signaling relay. Persistence: JSON file (DATA_FILE). Identity = device pid (no auth yet).
 const fs=require('fs'),path=require('path');
 const DATA_FILE=process.env.DATA_FILE||path.join(__dirname,'data','social.json');
 const BAD=['fuck','shit','bitch','bastard','asshole','dick','cunt','slut','whore','madarchod','behenchod','bhenchod','chutiya','chutia','gandu','harami','kutta','kutti','randi','bhosdi','lund','gaand','mc','bc','kanjar','haramzada','kameena','sharmoota','kalb','ibn el','khara'];
 const BADRE=new RegExp('(^|[^a-z])('+BAD.map(w=>w.replace(/ /g,'\\s*')).join('|')+')(?=[^a-z]|$)','gi');
 function clean(t,max){t=String(t||'').replace(/[\u0000-\u001f]/g,' ').slice(0,max||200).trim();return t.replace(BADRE,(m,a,w)=>a+'*'.repeat(w.length))}
+const DM_NEW_CAP=+process.env.DM_NEW_CAP||20;
 const ROOMDEFS=[['general','🌍 General',8],['pakistan','🇵🇰 Pakistan',8],['india','🇮🇳 India',8],['arabic','🌙 Arabic',8],['english','🇬🇧 English',8],['ludo-pro','👑 Ludo Pros',4]];
 module.exports=function(ctx){const {clients,send,fids,fidOf}=ctx;
  let D={users:{},dms:{},reports:[],clubs:{}};try{D=Object.assign(D,JSON.parse(fs.readFileSync(DATA_FILE,'utf8')))}catch(e){}
@@ -21,7 +22,8 @@ function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return
   friend:viewer?viewer.friends.includes(u.fid):false,pending:viewer?viewer.reqOut.includes(u.fid):false,incoming:viewer?viewer.reqIn.includes(u.fid):false,blocked:viewer?viewer.blocked.includes(u.fid):false}}
  function blockedEither(a,b){return (a.blocked||[]).includes(b.fid)||(b.blocked||[]).includes(a.fid)}
  function social(u){return {t:'social',me:pub(u),friends:u.friends.map(f=>pub(U(f),u)).filter(Boolean),reqIn:u.reqIn.map(f=>pub(U(f),u)).filter(Boolean),reqOut:u.reqOut.slice(),blocked:u.blocked.map(f=>pub(U(f),u)).filter(Boolean),
-  recent:u.recent.map(r=>Object.assign({t:r.t},pub(U(r.fid),u))).filter(x=>x.fid),unread:Object.fromEntries(u.friends.map(f=>[f,((D.dms[dk(u.fid,f)]||[]).filter(x=>x.to===u.fid&&!x.read)).length]))}}
+  recent:u.recent.map(r=>Object.assign({t:r.t},pub(U(r.fid),u))).filter(x=>x.fid),unread:unreadMap(u)}}
+ function unreadMap(u){const r={};for(const k in D.dms){const [a,b]=k.split(':');if(a!==u.fid&&b!==u.fid)continue;const o=a===u.fid?b:a;if(u.blocked.includes(o))continue;const n=D.dms[k].filter(x=>x.to===u.fid&&!x.read).length;if(n||u.friends.includes(o))r[o]=n}return r}
  function dk(a,b){return a<b?a+':'+b:b+':'+a}
  function pushSocial(fid){const u=U(fid);if(u)toFid(fid,social(u))}
  // ---------- chat rooms ----------
@@ -37,7 +39,7 @@ function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return
  const lastMsg=new Map();function rate(fid,ms,ch){const k=fid+(ch||'');const t=Date.now(),l=lastMsg.get(k)||0;if(t-l<ms)return false;lastMsg.set(k,t);return true}
  return {clean,D,flush,CR,
   onHello(pid,c,m){const u=ensure(pid,c);if(m.prof){const p=m.prof;u.level=Math.max(1,Math.min(999,p.level|0||1));u.wins=Math.max(0,p.wins|0);u.games=Math.max(0,p.games|0);u.frame=String(p.frame||'none').slice(0,16)}
-   persist();send(c.ws,social(u));if(u.inbox.length){u.inbox.forEach(g=>send(c.ws,g));u.inbox=[];persist()}
+   persist();send(c.ws,social(u));if(u.inbox.length){u.inbox.forEach(g=>{if(g&&g.t!=='giftIn')send(c.ws,g)});u.inbox=[];persist()}
    u.friends.forEach(f=>pushSocial(f))},
   onClose(pid,c){if(c&&c.fid){crLeave(c.fid);const u=U(c.fid);if(u)u.friends.forEach(f=>pushSocial(f))}},
   onGameStart(r){const fs_=r.seats.filter(s=>s.pid).map(s=>fidOf(s.pid));fs_.forEach(a=>fs_.forEach(b=>addRecent(a,b)));persist()},
@@ -65,15 +67,22 @@ function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return
      u.reqIn=u.reqIn.filter(x=>x!==tf);u.reqOut=u.reqOut.filter(x=>x!==tf);tu.reqIn=tu.reqIn.filter(x=>x!==me);tu.reqOut=tu.reqOut.filter(x=>x!==me);persist();send(ws,social(u));pushSocial(tf);return true}
     case 'unblock':{u.blocked=u.blocked.filter(x=>x!==tf);persist();send(ws,social(u));return true}
     case 'report':{if(!tu)return true;D.reports.push({by:me,fid:tf,reason:clean(m.reason,100),ctx:clean(m.ctx,300),t:Date.now()});if(D.reports.length>2000)D.reports=D.reports.slice(-2000);persist();send(ws,{t:'toast',msg:'Report sent. Thank you.'});return true}
-    case 'dm':{if(!tu||!u.friends.includes(tf)){send(ws,{t:'error',msg:'You can only message friends'});return true}if(blockedEither(u,tu))return true;if(!rate(me,400,'d'))return true;
-     const text=clean(m.text,300);if(!text)return true;const k=dk(me,tf);const msg={from:me,to:tf,text,t:Date.now(),read:false};(D.dms[k]=D.dms[k]||[]).push(msg);if(D.dms[k].length>200)D.dms[k]=D.dms[k].slice(-200);persist();
-     send(ws,{t:'dm',m:msg});toFid(tf,{t:'dm',m:msg,from:pub(u,tu)});return true}
-    case 'dmhist':{if(!tu)return true;const k=dk(me,tf);const list=D.dms[k]||[];list.forEach(x=>{if(x.to===me)x.read=true});persist();send(ws,{t:'dmhist',fid:tf,list:list.slice(-100)});return true}
-    case 'sgift':{// coin/diamond gift to a friend; sender deducts locally, server caps amounts (no auth yet)
-     if(!tu||!u.friends.includes(tf)){send(ws,{t:'error',msg:'Gifts are for friends only'});return true}const kind=m.kind==='diamonds'?'diamonds':'coins';
-     const amt=Math.max(1,Math.min(kind==='diamonds'?100:10000,m.amount|0));const day=new Date().toISOString().slice(0,10);u.giftDay=u.giftDay===day?day:(u.giftSent=0,day);
-     if((u.giftSent||0)>=10){send(ws,{t:'error',msg:'Daily gift limit reached'});return true}u.giftSent=(u.giftSent||0)+1;
-     const g={t:'giftIn',kind,amount:amt,from:pub(u,tu),at:Date.now()};if(!toFid(tf,g))tu.inbox.push(g);persist();send(ws,{t:'giftSent',kind,amount:amt,to:tf});return true}
+    case 'dm':{// 3.10.2: any player can message any player unless blocked or the receiver only accepts friends; daily cap on new conversations with strangers
+     if(!tu||tf===me){send(ws,{t:'error',msg:'Player not found'});return true}if(blockedEither(u,tu)){send(ws,{t:'error',msg:'You cannot message this player'});return true}
+     const fr=u.friends.includes(tf);if(!fr&&tu.dmFriendsOnly){send(ws,{t:'error',msg:'This player only accepts messages from friends'});return true}
+     if(!rate(me,400,'d'))return true;const text=clean(m.text,300);if(!text)return true;const k=dk(me,tf);const conv=D.dms[k]=D.dms[k]||[];
+     if(!fr&&!conv.length){const day=new Date().toISOString().slice(0,10);if(u.dmNewDay!==day){u.dmNewDay=day;u.dmNew=0}
+      if((u.dmNew||0)>=DM_NEW_CAP){D.dms[k].length||delete D.dms[k];send(ws,{t:'error',msg:'Daily limit for new chats reached. Add them as a friend or try tomorrow.'});return true}u.dmNew=(u.dmNew||0)+1}
+     const msg={from:me,to:tf,text,t:Date.now(),read:false};conv.push(msg);if(conv.length>200)D.dms[k]=conv.slice(-200);persist();
+     send(ws,{t:'dm',m:msg,to:pub(tu,u)});toFid(tf,{t:'dm',m:msg,from:pub(u,tu)});return true}
+    case 'dmhist':{if(!tu)return true;const k=dk(me,tf);const list=D.dms[k]||[];let any=false;list.forEach(x=>{if(x.to===me&&!x.read){x.read=true;any=true}});if(any){persist();toFid(tf,{t:'dmread',fid:me})}
+     send(ws,{t:'dmhist',fid:tf,list:list.slice(-100),p:pub(tu,u)});return true}
+    case 'inbox':{const out=[];for(const k in D.dms){const [a,b]=k.split(':');if(a!==me&&b!==me)continue;const o=a===me?b:a;const ou=U(o);const l=D.dms[k];if(!ou||!l.length||u.blocked.includes(o))continue;
+      const last=l[l.length-1];out.push(Object.assign(pub(ou,u),{last:{from:last.from,to:last.to,text:last.text,t:last.t,read:last.read},unread:l.filter(x=>x.to===me&&!x.read).length}))}
+     out.sort((x,y)=>y.last.t-x.last.t);send(ws,{t:'inbox',list:out.slice(0,60),friendsOnly:!!u.dmFriendsOnly});return true}
+    case 'dmset':{u.dmFriendsOnly=!!m.friendsOnly;persist();send(ws,{t:'dmset',friendsOnly:u.dmFriendsOnly});return true}
+    case 'sgift':// 3.10.2: coin/diamond transfers between players are disabled
+     send(ws,{t:'error',msg:'Coin and diamond gifts between players are disabled'});return true;
     // ----- chat rooms -----
     case 'crooms':send(ws,{t:'crooms',list:[...CR.values()].map(r=>({id:r.id,name:r.name,count:r.members.size,seats:r.seats.length,used:r.seats.filter(s=>s.fid).length}))});return true;
     case 'cjoin':{const r=CR.get(String(m.id));if(!r)return true;crLeave(me);r.members.add(me);if(!r.host)r.host=me;crBc(r,crInfo(r));return true}
