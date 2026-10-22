@@ -3,7 +3,7 @@ const http=require('http'),fs=require('fs'),path=require('path'),crypto=require(
 const {WebSocketServer}=require('ws');
 const L=require(path.join(__dirname,'..','logic.js'));
 const PORT=+process.env.PORT||8080,TURN_MS=+process.env.TURN_MS||10000,BOT_MS=+process.env.BOT_MS||900,
- OFFLINE_MS=+process.env.OFFLINE_MS||1500,QUICK_MS=+process.env.QUICK_MS||25000,ANIM_MS=+process.env.ANIM_MS||1400,NOMOVE_MS=+process.env.NOMOVE_MS||900;
+ OFFLINE_MS=+process.env.OFFLINE_MS||1500,QUICK_MS=+process.env.QUICK_MS||60000,ANIM_MS=+process.env.ANIM_MS||1400,NOMOVE_MS=+process.env.NOMOVE_MS||900;
 const ROOT=path.join(__dirname,'..');
 const store=require('./store.js');const LB=new Map();for(const e of (store.get('leaderboard')||[]))if(e&&e.pid)LB.set(e.pid,e);
 function lbSave(){store.set('leaderboard',[...LB.values()],2000)}
@@ -37,11 +37,11 @@ const BOTN=['Bot Leo','Bot Mia','Bot Kai','Bot Zed'];
 // 3.8.0: quick-match fill players (after QUICK_MS with no real opponent) get normal names/avatars
 const FILLN=['Ali','Sana','Bilal','Ayesha','Hamza','Zara','Omar','Fatima','Usman','Hira','Daniel','Lucia','Marco','Sofia','Arjun','Priya','Yusuf','Mariam','Diego','Elena','Kemal','Aisha','Rafael','Noor'];
 const FILLA=['🦁','🐯','🦊','🐼','🐵','🐸','🐨','🦄','🐲','🦉','🐙','👳'];
-function qkey(size,mode,night){return size+'|'+mode+'|'+(night?1:0)}
+function qkey(size,mode,night,blockade){return size+'|'+mode+'|'+(night?1:0)+'|'+(blockade?1:0)}
 function code(){let c;do c=Math.random().toString(36).slice(2,7).toUpperCase();while(rooms.has(c));return c}
 function send(ws,m){if(ws&&ws.readyState===1)ws.send(JSON.stringify(m))}
 function bc(r,m){r.seats.forEach(s=>{if(s.pid&&clients.get(s.pid)&&clients.get(s.pid).room===r.code)send(clients.get(s.pid).ws,m)})}
-function roomInfo(r){return {t:'room',code:r.code,public:r.public,size:r.size,host:r.host,started:r.started,opts:r.opts,
+function roomInfo(r){return {t:'room',code:r.code,public:r.public,size:r.size,host:r.host,started:r.started,opts:r.opts,fillIn:r.fillAt&&!r.started?Math.max(0,r.fillAt-Date.now()):null,
  players:r.seats.map(s=>({fid:s.pid?fidOf(s.pid):null,name:s.name,avatar:s.avatar,bot:!!s.bot&&!s.fill,online:s.bot||!!(s.pid&&clients.get(s.pid)&&clients.get(s.pid).ws&&clients.get(s.pid).room===r.code&&clients.get(s.pid).ws.readyState===1)}))}}
 function sendRoom(r){r.seats.forEach((s,i)=>{const c=s.pid&&clients.get(s.pid);if(c&&c.room===r.code)send(c.ws,{...roomInfo(r),you:i})})}
 function stateMsg(r){return {t:'state',g:r.g,phase:r.phase,dice:r.dice,moves:r.moves,deadline:r.deadline,left:Math.max(0,r.deadline-Date.now()),turnMs:TURN_MS,colors:r.colors}}
@@ -51,7 +51,7 @@ function joinRoom(c,pid,r){if(c.room&&c.room!==r.code)leaveRoom(pid);let i=r.sea
  if(i<0){if(r.started)return send(c.ws,{t:'error',msg:'Game already started'});if(r.seats.length>=r.size)return send(c.ws,{t:'error',msg:'Room is full'});r.seats.push({pid,name:c.name,avatar:c.avatar});if(!r.host)r.host=pid}
  c.room=r.code;sendRoom(r);if(r.started)send(c.ws,stateMsg(r));
  if(!r.started&&r.seats.length===r.size)startGame(r);
- if(r.public&&!r.started&&r.seats.length>=1&&!r.qt)r.qt=setTimeout(()=>{if(!r.started&&r.seats.some(s=>s.pid)){while(r.seats.length<r.size)addFill(r);startGame(r)}},QUICK_MS)}
+ if(r.public&&!r.started&&r.seats.length>=1&&!r.qt){r.fillAt=Date.now()+QUICK_MS;sendRoom(r)}if(r.public&&!r.started&&r.seats.length>=1&&!r.qt)r.qt=setTimeout(()=>{if(!r.started&&r.seats.some(s=>s.pid)){while(r.seats.length<r.size)addFill(r);startGame(r)}},QUICK_MS)}
 function addFill(r){const used=new Set(r.seats.map(s=>s.name));const pool=FILLN.filter(n=>!used.has(n));const name=pool.length?pool[crypto.randomInt(pool.length)]:'Player'+(100+crypto.randomInt(900));r.seats.push({bot:true,fill:true,name,avatar:FILLA[crypto.randomInt(FILLA.length)]})}
 function addBot(r){const k=r.seats.length;r.seats.push({bot:true,name:BOTN[k%4],avatar:'🤖'})}
 function leaveRoom(pid){const c=clients.get(pid);if(!c||!c.room)return;const r=rooms.get(c.room);c.room=null;if(!r)return;
@@ -102,10 +102,11 @@ wss.on('connection',ws=>{let pid=null;ws.isAlive=true;ws.on('pong',()=>ws.isAliv
   switch(m.t){
    case 'create':{const n=Math.min(4,Math.max(2,m.size|0||4));if(m.opts&&m.night!=null&&m.opts.night==null)m.opts.night=m.night;joinRoom(c,pid,newRoom(n,m.opts,false));break}
    case 'join':{const rr=rooms.get(String(m.code||'').toUpperCase().trim());if(!rr)send(ws,{t:'error',msg:'Room not found'});else joinRoom(c,pid,rr);break}
-   case 'quick':{// 3.8.0: queue key = player count + mode + night mode; only same-key players share a room
-     const md=MODES.includes(m.mode)?m.mode:'classic';const sz=md==='team'?4:([2,3,4].includes(m.size|0)?(m.size|0):4);const nt=!!m.night;const k=qkey(sz,md,nt);
+   case 'quick':{// queue key = player count + mode + night mode + house rule (blockade); only same-key players share a room.
+     // 3.10.3: computer players fill empty seats only after QUICK_MS (60 s) without enough real players
+     const md=MODES.includes(m.mode)?m.mode:'classic';const sz=md==='team'?4:([2,3,4].includes(m.size|0)?(m.size|0):4);const nt=!!m.night,bl=!!m.blockade;const k=qkey(sz,md,nt,bl);
      if(c.room){const cur=rooms.get(c.room);if(cur&&!cur.started)leaveRoom(pid)}
-     let rr=[...rooms.values()].find(x=>x.public&&!x.started&&x.qkey===k&&x.seats.length<x.size);if(!rr){rr=newRoom(sz,{mode:md,night:nt},true);rr.qkey=k}joinRoom(c,pid,rr);break}
+     let rr=[...rooms.values()].find(x=>x.public&&!x.started&&x.qkey===k&&x.seats.length<x.size);if(!rr){rr=newRoom(sz,{mode:md,night:nt,blockade:bl,three6:true},true);rr.qkey=k}joinRoom(c,pid,rr);break}
    case 'start':if(r&&!r.started&&r.host===pid){while(r.seats.length<(r.opts.mode==='team'?4:2))addBot(r);startGame(r)}break;
    case 'addbot':if(r&&!r.started&&r.host===pid&&r.seats.length<r.size){addBot(r);sendRoom(r);if(r.seats.length===r.size)startGame(r)}break;
    case 'roll':if(r&&r.started&&seatOf(r,pid)===r.g.turn)doRoll(r);break;

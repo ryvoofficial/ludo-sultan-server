@@ -34,4 +34,11 @@ let n=0;const ok=(c,m)=>{n++;assert.ok(c,m)};
  await until(()=>K.over,120000);ok(K.over.length>=1,'kill game finished');console.log('kill penalties seen',K.pen);
  // 6) unknown mode -> classic; size 6 -> 4 (6P is offline only)
  const Z=await client('Z');q(Z,'weird',6,false);await until(()=>Z.room);ok(Z.room.opts.mode==='classic'&&Z.room.size===4,'fallbacks');
+ // 7) 3.10.3: house rule (blockade) is part of the key; fillIn countdown sent; every mode playable online via quick match
+ const Q1=await client('Q1'),Q2=await client('Q2');Q1.ws.send(JSON.stringify({t:'quick',mode:'arrow',size:2,night:false,blockade:true}));Q2.ws.send(JSON.stringify({t:'quick',mode:'arrow',size:2,night:false,blockade:false}));
+ await until(()=>Q1.room&&Q2.room&&Q1.room.fillIn!=null);ok(Q1.room.code!==Q2.room.code,'blockade splits queues');ok(Q1.room.opts.blockade===true&&Q2.room.opts.blockade===false,'blockade in room opts');
+ ok(Q1.room.fillIn>0&&Q1.room.fillIn<=QMS,'fillIn countdown '+Q1.room.fillIn);
+ for(const md of ['classic','quick','team','arrow','blitz','kill']){const X=await client('X'+md),Y=await client('Y'+md);const sz=md==='team'?4:2;
+  X.ws.send(JSON.stringify({t:'quick',mode:md,size:sz,night:true,blockade:true}));await until(()=>X.room);Y.ws.send(JSON.stringify({t:'quick',mode:md,size:sz,night:true,blockade:true}));
+  await until(()=>Y.room&&X.room.started&&Y.room.started,QMS+4000);ok(X.room.code===Y.room.code&&X.room.opts.mode===md&&X.state&&X.state.g,'online '+md+' matched + started');X.ws.close();Y.ws.close()}
  console.log('test-match: ALL PASSED ('+n+' checks)');srv.kill();process.exit(0)})().catch(e=>{console.error('FAIL',e);srv.kill();process.exit(1)});
