@@ -8,9 +8,9 @@ function clean(t,max){t=String(t||'').replace(/[\u0000-\u001f]/g,' ').slice(0,ma
 const DM_NEW_CAP=+process.env.DM_NEW_CAP||20;
 const ROOMDEFS=[['general','🌍 General',8],['pakistan','🇵🇰 Pakistan',8],['india','🇮🇳 India',8],['arabic','🌙 Arabic',8],['english','🇬🇧 English',8],['ludo-pro','👑 Ludo Pros',4]];
 module.exports=function(ctx){const {clients,send,fids,fidOf}=ctx;
- let D={users:{},dms:{},reports:[],clubs:{}};try{D=Object.assign(D,JSON.parse(fs.readFileSync(DATA_FILE,'utf8')))}catch(e){}
- let wt=null;function persist(){if(wt)return;wt=setTimeout(()=>{wt=null;try{fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});fs.writeFileSync(DATA_FILE+'.tmp',JSON.stringify(D));fs.renameSync(DATA_FILE+'.tmp',DATA_FILE)}catch(e){console.error('persist',e.message)}},+process.env.PERSIST_MS||300)}
- function flush(){if(wt){clearTimeout(wt);wt=null}try{fs.mkdirSync(path.dirname(DATA_FILE),{recursive:true});fs.writeFileSync(DATA_FILE,JSON.stringify(D))}catch(e){}}
+ const store=require('./store.js');let D=Object.assign({users:{},dms:{},reports:[],clubs:{}},store.get('social')||{});store.set('social',D);
+ function persist(){store.set('social',D,+process.env.PERSIST_MS||300)}
+ function flush(){store.set('social',D)}
  // users keyed by fid (public 6-char id); pid kept privately for routing
  function U(fid){return D.users[fid]}
  function ensure(pid,c){const fid=c.fid;let u=D.users[fid];if(!u)u=D.users[fid]={fid,pid,name:c.name,avatar:c.avatar,level:1,wins:0,games:0,frame:'none',friends:[],reqIn:[],reqOut:[],blocked:[],recent:[],inbox:[],club:null,created:Date.now()};
