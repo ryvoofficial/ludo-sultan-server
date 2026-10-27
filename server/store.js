@@ -31,4 +31,7 @@ async function write(){if(writing){await writing;if(!dirty.size)return}const ks=
  try{await writing}finally{writing=null}if(dirty.size&&!timer)timer=setTimeout(()=>{timer=null;write().catch(()=>{})},5000)}
 async function flush(){if(timer){clearTimeout(timer);timer=null}await write();if(pool&&dirty.size)await write()}
 async function close(){await flush();if(pool)await pool.end().catch(()=>{})}
-module.exports={init,get,set,flush,close,get pg(){return !!pool},get info(){return info}};
+// 3.11.0: direct SQL for tables with their own schema (accounts); null without Postgres
+async function query(sql,params){if(!pool)return null;return pool.query(sql,params)}
+async function ping(){if(!pool)return {ok:true,store:'json'};const t=Date.now();const {rows}=await pool.query('SELECT 1 AS one');return {ok:rows[0].one===1,store:'postgres',ms:Date.now()-t}}
+module.exports={init,get,set,flush,close,query,ping,get pg(){return !!pool},get info(){return info}};

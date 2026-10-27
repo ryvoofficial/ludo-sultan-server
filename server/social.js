@@ -37,7 +37,13 @@ function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return
  function sameVoice(a,b){const ua=U(a),ub=U(b);if(!ua||!ub)return false;const ca=clients.get(ua.pid),cb=clients.get(ub.pid);
   if(ca&&cb&&ca.room&&ca.room===cb.room)return true;const r=roomOf(a);return !!(r&&r.members.has(b)&&r.seats.some(s=>s.fid===a)&&r.seats.some(s=>s.fid===b))}
  const lastMsg=new Map();function rate(fid,ms,ch){const k=fid+(ch||'');const t=Date.now(),l=lastMsg.get(k)||0;if(t-l<ms)return false;lastMsg.set(k,t);return true}
- return {clean,D,flush,CR,
+ // 3.11.0 delete account: remove the profile, DMs, friend links and club membership of this player
+ function purge(pid){const fid=fidOf(pid);const u=U(fid);if(!u)return false;crLeave(fid);
+  Object.values(D.users).forEach(x=>{['friends','reqIn','reqOut','blocked'].forEach(k=>{if(Array.isArray(x[k]))x[k]=x[k].filter(f=>f!==fid)});if(Array.isArray(x.recent))x.recent=x.recent.filter(r=>r.fid!==fid)});
+  for(const k of Object.keys(D.dms)){const [a,b]=k.split(':');if(a===fid||b===fid)delete D.dms[k]}
+  for(const cl of Object.values(D.clubs||{})){if(Array.isArray(cl.members))cl.members=cl.members.filter(f=>f!==fid);if(cl.owner===fid)cl.owner=(cl.members||[])[0]||null;if(!cl.members||!cl.members.length)delete D.clubs[cl.id]}
+  D.reports=(D.reports||[]).filter(r=>r.from!==fid);delete D.users[fid];persist();u.friends.forEach(f=>pushSocial(f));return true}
+ return {clean,D,flush,CR,purge,cleanName:t=>clean(t,16),
   onHello(pid,c,m){const u=ensure(pid,c);if(m.prof){const p=m.prof;u.level=Math.max(1,Math.min(999,p.level|0||1));u.wins=Math.max(0,p.wins|0);u.games=Math.max(0,p.games|0);u.frame=String(p.frame||'none').slice(0,16)}
    persist();send(c.ws,social(u));if(u.inbox.length){u.inbox.forEach(g=>{if(g&&g.t!=='giftIn')send(c.ws,g)});u.inbox=[];persist()}
    u.friends.forEach(f=>pushSocial(f))},
@@ -50,6 +56,10 @@ function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return
      // 3.10.0 profile popup + Halloween contest
      u.caps=Math.max(0,p.caps|0);u.best=Math.max(0,Math.min(9999,p.best|0));u.cc=/^[A-Z]{2}$/.test(p.cc||'')?p.cc:'';if(p.hw)setHw(u,p.hw);persist();return true}
     case 'hwscore':setHw(u,m);persist();return true;
+    // 3.11.0 generic seasonal events (Festival of Lights = 'fol26')
+    case 'evscore':{const ev=String(m.ev||'');if(!/^[a-z0-9]{2,12}$/.test(ev))return true;u.ev=u.ev||{};u.ev[ev]={pts:Math.max(0,Math.min(1e7,m.pts|0)),games:Math.max(0,Math.min(1e5,m.games|0)),wins:Math.max(0,Math.min(1e5,m.wins|0))};persist();return true}
+    case 'evlb':{const ev=String(m.ev||'');const sc=x=>x.ev&&x.ev[ev];const all=Object.values(D.users).filter(x=>sc(x)&&sc(x).pts>0).sort((a,b)=>sc(b).pts-sc(a).pts);const rank=all.indexOf(u)+1;
+     send(ws,{t:'evlb',ev,list:all.slice(0,50).map(x=>({fid:x.fid,name:x.name,avatar:x.avatar,cc:x.cc||'',pts:sc(x).pts,wins:sc(x).wins,games:sc(x).games})),rank,total:all.length});return true}
     case 'hwlb':{const all=Object.values(D.users).filter(x=>x.hw&&x.hw.pts>0).sort((a,b)=>b.hw.pts-a.hw.pts);const rank=all.indexOf(u)+1;
      send(ws,{t:'hwlb',list:all.slice(0,50).map(x=>({fid:x.fid,name:x.name,avatar:x.avatar,cc:x.cc||'',pts:x.hw.pts,wins:x.hw.wins,games:x.hw.games})),rank,total:all.length});return true}
     case 'social':send(ws,social(u));return true;

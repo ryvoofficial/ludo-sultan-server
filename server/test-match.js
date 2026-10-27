@@ -32,8 +32,9 @@ let n=0;const ok=(c,m)=>{n++;assert.ok(c,m)};
  // 5) Must Kill online: accepted by server, game plays to the end with random (capture-skipping) moves -> penalties applied server-side
  const K=await client('K');K.play=true;q(K,'kill',2,false);await until(()=>K.room&&K.room.started,QMS+4000);ok(K.room.opts.mode==='kill','kill mode online');
  await until(()=>K.over,120000);ok(K.over.length>=1,'kill game finished');console.log('kill penalties seen',K.pen);
- // 6) unknown mode -> classic; size 6 -> 4 (6P is offline only)
- const Z=await client('Z');q(Z,'weird',6,false);await until(()=>Z.room);ok(Z.room.opts.mode==='classic'&&Z.room.size===4,'fallbacks');
+ // 6) unknown mode -> classic, unknown size -> 4; 3.11.0: size 6 = online 6-player classic
+ const Z=await client('Z');q(Z,'weird',5,false);await until(()=>Z.room);ok(Z.room.opts.mode==='classic'&&Z.room.size===4,'fallbacks');
+ const Z6=await client('Z6');q(Z6,'arrow',6,false);await until(()=>Z6.room);ok(Z6.room.size===6&&Z6.room.six&&Z6.room.opts.mode==='classic','6P online room');
  // 7) 3.10.3: house rule (blockade) is part of the key; fillIn countdown sent; every mode playable online via quick match
  const Q1=await client('Q1'),Q2=await client('Q2');Q1.ws.send(JSON.stringify({t:'quick',mode:'arrow',size:2,night:false,blockade:true}));Q2.ws.send(JSON.stringify({t:'quick',mode:'arrow',size:2,night:false,blockade:false}));
  await until(()=>Q1.room&&Q2.room&&Q1.room.fillIn!=null);ok(Q1.room.code!==Q2.room.code,'blockade splits queues');ok(Q1.room.opts.blockade===true&&Q2.room.opts.blockade===false,'blockade in room opts');
