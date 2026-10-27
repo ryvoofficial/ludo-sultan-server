@@ -20,3 +20,7 @@ Optional: `PG_TABLE` (separate table for tests), `PG_DRIVER=neon-ws` (dev-only, 
 - **Event leaderboards**: `evscore` / `evlb` (Halloween `hw26`, Festival of Lights `fol26`).
 - Health: `/health`, `/health/db`.
 - Tests: `node server/test-v3110.js`, `node server/test-tour-unit.js` (run with `DATABASE_URL` unset).
+
+### 3.11.0 skins
+- Client sends `{t:"skin",tok,dice}` (ids `[a-z0-9]{1,16}`, else `classic`) on connect and on equip; saved in the profile (`skin`), restored on reconnect, and included as `tok`/`dice` on each player in `room` messages so opponents see each other's equipped skins. Unlocks/purchases stay client-side (in-game coins/diamonds only, no trading).
+- Test: `node server/test-skins.js`.

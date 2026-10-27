@@ -50,7 +50,7 @@ function code(){let c;do c=Math.random().toString(36).slice(2,7).toUpperCase();w
 function send(ws,m){if(ws&&ws.readyState===1)ws.send(JSON.stringify(m))}
 function bc(r,m){r.seats.forEach(s=>{if(s.pid&&clients.get(s.pid)&&clients.get(s.pid).room===r.code)send(clients.get(s.pid).ws,m)})}
 function roomInfo(r){return {t:'room',code:r.code,six:!!r.six,tour:r.tour?{id:r.tour.id,round:r.tour.round}:null,public:r.public,size:r.size,host:r.host,started:r.started,opts:r.opts,fillIn:r.fillAt&&!r.started?Math.max(0,r.fillAt-Date.now()):null,
- players:r.seats.map(s=>({fid:s.pid?fidOf(s.pid):null,name:s.name,avatar:s.avatar,bot:!!s.bot&&!s.fill,online:s.bot||!!(s.pid&&clients.get(s.pid)&&clients.get(s.pid).ws&&clients.get(s.pid).room===r.code&&clients.get(s.pid).ws.readyState===1)}))}}
+ players:r.seats.map(s=>({fid:s.pid?fidOf(s.pid):null,name:s.name,avatar:s.avatar,tok:(s.pid&&clients.get(s.pid)&&clients.get(s.pid).tok)||s.tok||null,dice:(s.pid&&clients.get(s.pid)&&clients.get(s.pid).dice)||s.dice||null,bot:!!s.bot&&!s.fill,online:s.bot||!!(s.pid&&clients.get(s.pid)&&clients.get(s.pid).ws&&clients.get(s.pid).room===r.code&&clients.get(s.pid).ws.readyState===1)}))}}
 function sendRoom(r){r.seats.forEach((s,i)=>{const c=s.pid&&clients.get(s.pid);if(c&&c.room===r.code)send(c.ws,{...roomInfo(r),you:i})})}
 function stateMsg(r){return {t:'state',six:!!r.six,g:r.g,phase:r.phase,dice:r.dice,moves:r.moves,deadline:r.deadline,left:Math.max(0,r.deadline-Date.now()),turnMs:TURN_MS,colors:r.colors}}
 const MODES=['classic','quick','team','arrow','blitz','kill'];
@@ -110,6 +110,8 @@ wss.on('connection',ws=>{let pid=null;ws.isAlive=true;ws.on('pong',()=>ws.isAliv
    c.name=String(m.name||'Player').slice(0,16);c.avatar=(a=>/^av:[a-z0-9_]{1,24}$/i.test(a)?a:a.slice(0,4))(String(m.avatar||'🦁'));
    c.diamonds=Math.max(0,Math.min(100000,(m.diamonds|0)||0));c.fid=fidOf(pid);fids.set(c.fid,pid);send(ws,{t:'welcome',pid,fid:c.fid});social.onHello(pid,c,m);const r=c.room&&rooms.get(c.room);if(r){sendRoom(r);if(r.started){send(ws,stateMsg(r));schedule(r);resendOver(r,ws)}}return}
   if(!pid)return;const c=clients.get(pid);const r=c.room&&rooms.get(c.room);
+  if(m.t==='skin'){const ok=v=>typeof v==='string'&&/^[a-z0-9]{1,16}$/.test(v)?v:'classic';c.tok=ok(m.tok);c.dice=ok(m.dice);try{social.setSkin(pid,c)}catch(e){}
+   if(r)sendRoom(r);return}
   switch(m.t){
    case 'create':{const n=(m.size|0)===6||(m.opts&&m.opts.six)?6:Math.min(4,Math.max(2,m.size|0||4));if(m.opts&&m.night!=null&&m.opts.night==null)m.opts.night=m.night;joinRoom(c,pid,newRoom(n,m.opts,false));break}
    case 'join':{const rr=rooms.get(String(m.code||'').toUpperCase().trim());if(!rr)send(ws,{t:'error',msg:'Room not found'});else joinRoom(c,pid,rr);break}

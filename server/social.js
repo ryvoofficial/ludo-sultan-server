@@ -18,7 +18,7 @@ module.exports=function(ctx){const {clients,send,fids,fidOf}=ctx;
  function online(fid){const u=U(fid);const c=u&&clients.get(u.pid);return !!(c&&c.ws&&c.ws.readyState===1)}
  function toFid(fid,m){const u=U(fid);const c=u&&clients.get(u.pid);if(c&&c.ws)send(c.ws,m);return !!(c&&c.ws&&c.ws.readyState===1)}
  function setHw(u,h){u.hw={pts:Math.max(0,Math.min(1e7,h.pts|0)),games:Math.max(0,Math.min(1e5,h.games|0)),wins:Math.max(0,Math.min(1e5,h.wins|0))}}
-function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return {fid:u.fid,name:u.name,avatar:u.avatar,level:u.level,wins:u.wins,games:u.games,caps:u.caps,best:u.best,cc:u.cc||'',frame:u.frame,online:online(u.fid),club:cl?{id:cl.id,name:cl.name,badge:cl.badge}:null,
+function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return {fid:u.fid,name:u.name,avatar:u.avatar,level:u.level,wins:u.wins,games:u.games,caps:u.caps,best:u.best,cc:u.cc||'',frame:u.frame,skin:u.skin||null,online:online(u.fid),club:cl?{id:cl.id,name:cl.name,badge:cl.badge}:null,
   friend:viewer?viewer.friends.includes(u.fid):false,pending:viewer?viewer.reqOut.includes(u.fid):false,incoming:viewer?viewer.reqIn.includes(u.fid):false,blocked:viewer?viewer.blocked.includes(u.fid):false}}
  function blockedEither(a,b){return (a.blocked||[]).includes(b.fid)||(b.blocked||[]).includes(a.fid)}
  function social(u){return {t:'social',me:pub(u),friends:u.friends.map(f=>pub(U(f),u)).filter(Boolean),reqIn:u.reqIn.map(f=>pub(U(f),u)).filter(Boolean),reqOut:u.reqOut.slice(),blocked:u.blocked.map(f=>pub(U(f),u)).filter(Boolean),
@@ -44,7 +44,8 @@ function pub(u,viewer){if(!u)return null;const cl=u.club&&D.clubs[u.club];return
   for(const cl of Object.values(D.clubs||{})){if(Array.isArray(cl.members))cl.members=cl.members.filter(f=>f!==fid);if(cl.owner===fid)cl.owner=(cl.members||[])[0]||null;if(!cl.members||!cl.members.length)delete D.clubs[cl.id]}
   D.reports=(D.reports||[]).filter(r=>r.from!==fid);delete D.users[fid];persist();u.friends.forEach(f=>pushSocial(f));return true}
  return {clean,D,flush,CR,purge,cleanName:t=>clean(t,16),
-  onHello(pid,c,m){const u=ensure(pid,c);if(m.prof){const p=m.prof;u.level=Math.max(1,Math.min(999,p.level|0||1));u.wins=Math.max(0,p.wins|0);u.games=Math.max(0,p.games|0);u.frame=String(p.frame||'none').slice(0,16)}
+  setSkin(pid,c){const u=ensure(pid,c);u.skin={tok:c.tok||'classic',dice:c.dice||'classic'};persist()},
+  onHello(pid,c,m){const u=ensure(pid,c);if(u.skin&&!c.tok){c.tok=u.skin.tok;c.dice=u.skin.dice}if(m.prof){const p=m.prof;u.level=Math.max(1,Math.min(999,p.level|0||1));u.wins=Math.max(0,p.wins|0);u.games=Math.max(0,p.games|0);u.frame=String(p.frame||'none').slice(0,16)}
    persist();send(c.ws,social(u));if(u.inbox.length){u.inbox.forEach(g=>{if(g&&g.t!=='giftIn')send(c.ws,g)});u.inbox=[];persist()}
    u.friends.forEach(f=>pushSocial(f))},
   onClose(pid,c){if(c&&c.fid){crLeave(c.fid);const u=U(c.fid);if(u)u.friends.forEach(f=>pushSocial(f))}},
